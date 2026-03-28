@@ -1,22 +1,21 @@
 # Adaptive Traffic Signal Management System (ATMS)
 
-An intelligent traffic simulation and control system using Python, Pygame, and YOLOv11 to optimize intersection flow, reduce congestion, and prioritize emergency vehicles.
+An intelligent traffic simulation and control system using Python, Pygame, and YOLOv11 to optimize intersection flow and prioritize emergency vehicles.
 
 ##  Key Features
-- **Density-Based Adaptive Selection**: Dynamically selects the next lane to turn green based on vehicle count (heaviest queue first).
+- **Density-Based Adaptive Selection**: Dynamically selects the next lane to turn green based on vehicle count (heavier queues get priority).
 - **Emergency Priority Override**: Immediate signal preemption for ambulances with synchronized siren audio.
-- **Gap-Out Detection**: Switches phases early if the current road is clear, minimizing "wasted" green time.
-- **YOLO Integration**: Real-time vehicle counting via YOLOv11 (Mode 1 in `detector.py`).
-- **All-Red Safety Buffer**: Implements a safety interval between phase changes to prevent mid-intersection collisions.
-- **Automatic Multi-Resolution Scaling**: Simulation runs at a virtual resolution of 1400x922 but scales smoothly to any window size (default: 1080px width).
+- **Gap-Out Detection**: Switches phases early if the current road is clear, minimizing wasted green time.
+- **YOLOv11 Integration**: Ready for real-time vehicle counting via computer vision.
+- **Smooth Scaling**: Automatic window scaling (default 1080p width) for full-view visibility on any screen.
 
 ---
 
 ## Installation & Setup
 
 ### Prerequisites
-- Python 3.8+
-- [Optional] CUDA-enabled GPU for faster YOLO inference.
+- Python 3.8 or higher
+- `pip` (Python package manager)
 
 ### 1. Clone & Navigate
 ```bash
@@ -25,6 +24,7 @@ cd Adaptive-Traffic-Signal-Timer/Code/YOLO/darkflow
 ```
 
 ### 2. Prepare Environment
+
 #### **macOS / Linux**
 ```bash
 # Create and activate virtual environment
@@ -49,41 +49,39 @@ pip install -r requirements.txt
 
 ## How to Run
 
-Ensure your virtual environment is active, then execute:
+Ensure your virtual environment is active (see above), then run:
 
 ```bash
 python simulation.py
 ```
 
+*Note: The simulation automatically resolves asset paths relative to the script location, so it can be executed from any directory as long as the relative internal structure is preserved.*
+
 ---
 
 ## System Logic
 
-### 1. Cycle Management
-The system replaces traditional "Fixed Round Robin" with a **Weighted Priority Selection**. After every green phase, the controller scans all waiting lanes and picks the one with the highest vehicle density.
+### 1. Adaptive Cycle Management
+Replaces traditional fixed-time cycles with a **Weighted Priority Selector**. After every phase, the controller identifies the most congested lane and schedules it next.
 
 ### 2. Emergency Preemption
-A background thread continuously scans for `ambulance` sprites. If detected within the intersection boundary:
-1. The current green signal is immediately terminated.
-2. A 0.5s all-red safety buffer is applied.
-3. The ambulance's lane is switched to Green immediately.
+A real-time monitor scans for `ambulance` classes. If one enters the intersection's approach:
+1. The current active green signal is immediately terminated.
+2. A safety all-red buffer (0.5s) is applied.
+3. The ambulance's lane turns green until it clears the intersection.
 
-### 3. Gap-Out Logic
-To maximize efficiency, the system implements **Actuated Signal Logic**. If a lane becomes empty while the timer is still green (and a minimum green time has passed), the phase "gaps out" and switches to the next priority lane.
-
-### 4. Vehicle Physics
-- **Lane Disciplines**: Vehicles follow specific lanes (Slow/Main/Turning).
-- **Collision Avoidance**: Physics-based queuing with dynamic gaps ensures vehicles don't overlap while waiting.
-- **Rotation**: Smooth 90-degree turning transitions using Pygame surfaces.
+### 3. Actuated "Gap-Out" Logic
+If a lane becomes empty before its green timer expires, the system detects the "gap" and terminates the phase early to serve waiting traffic in other directions.
 
 ---
 
 ## Project Structure
-- `simulation.py`: The main engine containing the GUI, physics, and priority logic.
-- `detector.py`: YOLOv11 wrapper for real-time traffic density analysis.
-- `images/`: High-resolution assets for vehicles and intersection backgrounds.
+- `simulation.py`: Core engine (GUI, Physics, Adaptive Logic).
+- `detector.py`: YOLOv11 integration module.
+- `images/`: High-resolution sprites and background assets.
+- `yolov8n.pt`: Pre-trained YOLO weights for vehicle detection.
 
 ---
 
 ## License
-MIT License. Free to use for research and educational purposes.
+MIT License.

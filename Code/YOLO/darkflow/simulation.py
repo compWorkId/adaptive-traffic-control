@@ -106,9 +106,11 @@ class Vehicle(pygame.sprite.Sprite):
         vehicles[direction][lane].append(self)
         # self.stop = stops[direction][lane]
         self.index = len(vehicles[direction][lane]) - 1
-        path = "images/" + direction + "/" + vehicleClass + ".png"
+        # Robust relative pathing for cross-platform execution (any CWD)
+        script_dir = os.path.dirname(__file__)
+        path = os.path.join(script_dir, "images", direction, vehicleClass + ".png")
         if not os.path.exists(path):
-            path = "images/" + direction + "/car.png" # Fallback if image not found
+            path = os.path.join(script_dir, "images", direction, "car.png")
         
         # Standardize size with class-based dimensions and auto-cropping
         base_size = vehicle_sizes.get(vehicleClass, (54, 22))
@@ -302,7 +304,8 @@ def setTime():
     global noOfCars, noOfBikes, noOfBuses, noOfTrucks, noOfLanes
     global carTime, busTime, truckTime, bikeTime, global_detector
     
-    os.system("say detecting vehicles, "+directionNumbers[(currentGreen+1)%noOfSignals])
+    if sys.platform == 'darwin':
+        os.system("say 'detecting vehicles, " + directionNumbers[(currentGreen+1)%noOfSignals] + "' &")
     
     # Mode 1: AI/YOLO Detection (Uncomment for folder-based testing)
     # counts = global_detector.detect_and_count("images/detection_input.jpg")
@@ -562,42 +565,49 @@ class Main:
     black = (0, 0, 0)
     white = (255, 255, 255)
 
-    # Setting background image — load first so window size adapts to it
-    background = pygame.image.load('images/mod_int.png')
+    script_dir = os.path.dirname(__file__)
+    
+    # Setting background image
+    background_path = os.path.join(script_dir, 'images', 'mod_int.png')
+    background = pygame.image.load(background_path)
 
-    # Derive screen size from image
+    # Resolve screen size
     screenWidth, screenHeight = background.get_size()
     
-    # Target window dimensions (1080px width for higher resolution view)
+    # Target window dimensions (1080px width)
     targetWidth = 1080
     targetHeight = int(screenHeight * (targetWidth / screenWidth))
     
-    # virtual_screen stays 1400x922 for logic consistency
+    # Surfaces
     virtual_screen = pygame.Surface((screenWidth, screenHeight))
-    # screen is the actual window
     screen = pygame.display.set_mode((targetWidth, targetHeight))
-    pygame.display.set_caption("SIMULATION")
+    pygame.display.set_caption("SMART TRAFFIC SIMULATION")
 
-    # Loading signal images and font
-    redSignal = pygame.image.load('images/signals/red.png')
-    yellowSignal = pygame.image.load('images/signals/yellow.png')
-    greenSignal = pygame.image.load('images/signals/green.png')
+    # Image Assets
+    redSignal = pygame.image.load(os.path.join(script_dir, 'images', 'signals', 'red.png'))
+    yellowSignal = pygame.image.load(os.path.join(script_dir, 'images', 'signals', 'yellow.png'))
+    greenSignal = pygame.image.load(os.path.join(script_dir, 'images', 'signals', 'green.png'))
     font = pygame.font.Font(None, 30)
 
+    # YOLO Model Path
+    model_path = os.path.join(script_dir, 'yolov8n.pt')
+    
     # YOLO Detector Setup
     global global_detector
     try:
-        global_detector = VehicleDetector()
+        global_detector = VehicleDetector(model_name=model_path)
     except:
         global_detector = None
 
     # Siren Sound Setup
     siren_sound = None
     try:
-        if os.path.exists('images/siren.mp3'):
-            siren_sound = pygame.mixer.Sound('images/siren.mp3')
-        elif os.path.exists('images/siren.wav'):
-            siren_sound = pygame.mixer.Sound('images/siren.wav')
+        siren_mp3 = os.path.join(script_dir, 'images', 'siren.mp3')
+        siren_wav = os.path.join(script_dir, 'images', 'siren.wav')
+        if os.path.exists(siren_mp3):
+            siren_sound = pygame.mixer.Sound(siren_mp3)
+        elif os.path.exists(siren_wav):
+            siren_sound = pygame.mixer.Sound(siren_wav)
     except:
         pass
     siren_playing = False
@@ -643,12 +653,12 @@ class Main:
             virtual_screen.blit(signalTexts[i],signalTimerCoods[i]) 
             # vehicleCountTexts[i] hidden intentionally
 
-        # Siren control
         if checkAmbulance() != -1:
             if not siren_playing:
                 if siren_sound:
                     siren_sound.play(-1)
-                os.system("say 'Ambulance Priority' &") # Fallback vocal hooter
+                if sys.platform == 'darwin':
+                    os.system("say 'Ambulance Priority' &") # Vocal hooter (Mac only)
                 siren_playing = True
         else:
             if siren_playing:
