@@ -127,6 +127,8 @@ class Vehicle(pygame.sprite.Sprite):
             
         self.originalImage = pygame.transform.smoothscale(img, target_size)
         self.currentImage = self.originalImage
+        self.rect = self.currentImage.get_rect()
+        self.rect.topleft = (self.x, self.y)
 
     
         if(direction=='right'):
@@ -166,18 +168,65 @@ class Vehicle(pygame.sprite.Sprite):
     def render(self, screen):
         screen.blit(self.currentImage, (self.x, self.y))
 
+    def check_global_collision(self, next_x, next_y):
+        """
+        Check collision against cross-direction vehicles AND same-direction vehicles
+        that are currently mid-rotation (their rect has expanded diagonally).
+        Same-direction vehicles in straight-line motion are handled by lane lookahead.
+        """
+        INTER_LEFT   = 560
+        INTER_RIGHT  = 840
+        INTER_TOP    = 300
+        INTER_BOTTOM = 560
+
+        near_intersection = (INTER_LEFT - 60 < next_x < INTER_RIGHT + 60 and
+                             INTER_TOP  - 60 < next_y < INTER_BOTTOM + 60)
+        if not near_intersection:
+            return False
+
+        future_rect = self.currentImage.get_rect()
+        future_rect.topleft = (next_x, next_y)
+
+        for other in simulation:
+            if other == self:
+                continue
+
+            # Skip same-direction vehicles ONLY if they are moving straight (not rotating).
+            # Rotating vehicles expand their rect diagonally — the 1D lookahead can't catch that.
+            if other.direction == self.direction and not (other.rotateAngle > 0 and other.turned == 0):
+                continue
+
+            # Skip vehicles whose center is far outside the intersection zone
+            other_cx = other.x + other.currentImage.get_rect().width / 2
+            other_cy = other.y + other.currentImage.get_rect().height / 2
+            if not (INTER_LEFT - 80 < other_cx < INTER_RIGHT + 80 and
+                    INTER_TOP  - 80 < other_cy < INTER_BOTTOM + 80):
+                continue
+
+            if future_rect.colliderect(other.rect):
+                return True
+        return False
+
     def move(self):
         tspeed = self.speed
         speed_factor = 1.0
-        if(self.vehicleClass == 'ambulance'):
-            speed_factor = 1.25 # Ambulances up to 1.25x faster
-        elif(self.crossed == 1):
+        
+        # 1. Base Multipliers
+        if(self.crossed == 1):
             speed_factor = 1.25 # Clear intersection slightly faster
         elif(currentGreen == self.direction_number):
             if(currentYellow == 0):
                 speed_factor = 1.75
             else:
                 speed_factor = 0.75
+                
+        # 2. Ambulance Priority: Override everything and be the fastest
+        if(self.vehicleClass == 'ambulance'):
+            if(currentGreen == self.direction_number and currentYellow == 0):
+                speed_factor = 2.0 # Extra fast when green
+            else:
+                speed_factor = 1.5 # Still fast when clearing/approaching
+        
         tspeed *= speed_factor
 
         if(self.direction=='right'):
@@ -186,27 +235,54 @@ class Vehicle(pygame.sprite.Sprite):
                 vehicles[self.direction]['crossed'] += 1
             if(self.willTurn==1):
                 if(self.crossed==0 or self.x+self.currentImage.get_rect().width<mid[self.direction]['x']):
-                    if((self.x+self.currentImage.get_rect().width<=self.stop or (currentGreen==0) or self.crossed==1) and (self.index==0 or self.x+self.currentImage.get_rect().width<(vehicles[self.direction][self.lane][self.index-1].x - gap2) or vehicles[self.direction][self.lane][self.index-1].turned==1)):                
-                        self.x += tspeed
+                    if(self.x+self.currentImage.get_rect().width<=self.stop or (currentGreen==0) or self.crossed==1):
+                        can_move = True
+                        for i in range(self.index - 1, -1, -1):
+                            front_v = vehicles[self.direction][self.lane][i]
+                            if front_v.turned == 0:
+                                if self.x+self.currentImage.get_rect().width >= (front_v.x - gap2 - tspeed):
+                                    can_move = False
+                                break
+                        if can_move:
+                            if not self.check_global_collision(self.x + tspeed, self.y):
+                                self.x += tspeed
+                                self.rect.topleft = (self.x, self.y)
                 else:   
                     if(self.turned==0):
-                        self.rotateAngle += rotationAngle * speed_factor
-                        self.currentImage = pygame.transform.rotate(self.originalImage, -self.rotateAngle)
-                        self.x += 2 * speed_factor
-                        self.y += 1.8 * speed_factor
+                        # Rotation movement
+                        next_x = self.x + 2 * speed_factor
+                        next_y = self.y + 1.8 * speed_factor
+                        if not self.check_global_collision(next_x, next_y):
+                            self.rotateAngle += rotationAngle * speed_factor
+                            self.currentImage = pygame.transform.rotate(self.originalImage, -self.rotateAngle)
+                            self.x = next_x
+                            self.y = next_y
+                            self.rect = self.currentImage.get_rect()
+                            self.rect.topleft = (self.x, self.y)
                         if(self.rotateAngle>=90):
                             self.rotateAngle = 90
                             self.turned = 1
-                            # path = "images/" + directionNumbers[((self.direction_number+1)%noOfSignals)] + "/" + self.vehicleClass + ".png"
-                            # self.x = mid[self.direction]['x']
-                            # self.y = mid[self.direction]['y']
-                            # self.image = pygame.image.load(path)
                     else:
                         if(self.index==0 or self.y+self.currentImage.get_rect().height<(vehicles[self.direction][self.lane][self.index-1].y - gap2) or self.x+self.currentImage.get_rect().width<(vehicles[self.direction][self.lane][self.index-1].x - gap2)):
-                            self.y += tspeed
+                            if not self.check_global_collision(self.x, self.y + tspeed):
+                                self.y += tspeed
+                                self.rect.topleft = (self.x, self.y)
             else: 
-                if((self.x+self.currentImage.get_rect().width<=self.stop or self.crossed == 1 or (currentGreen==0)) and (self.index==0 or self.x+self.currentImage.get_rect().width<(vehicles[self.direction][self.lane][self.index-1].x - gap2) or (vehicles[self.direction][self.lane][self.index-1].turned==1))):                
-                    self.x += tspeed
+                if((self.x+self.currentImage.get_rect().width<=self.stop or self.crossed == 1 or (currentGreen==0))):
+                    can_move = True
+                    # Multi-vehicle lookahead: find the nearest blocking vehicle in this lane
+                    for i in range(self.index - 1, -1, -1):
+                        front_v = vehicles[self.direction][self.lane][i]
+                        if front_v.turned == 0:
+                            if (self.x + self.currentImage.get_rect().width) >= (front_v.x - gap2 - tspeed):
+                                can_move = False
+                            break # Found our target, no need to check further back
+                    
+                    if can_move:
+                        # Before actual move, check for global collisions (cross-traffic, etc.)
+                        if not self.check_global_collision(self.x + tspeed, self.y):
+                            self.x += tspeed
+                            self.rect.topleft = (self.x, self.y)
 
 
 
@@ -216,23 +292,51 @@ class Vehicle(pygame.sprite.Sprite):
                 vehicles[self.direction]['crossed'] += 1
             if(self.willTurn==1):
                 if(self.crossed==0 or self.y+self.currentImage.get_rect().height<mid[self.direction]['y']):
-                    if((self.y+self.currentImage.get_rect().height<=self.stop or (currentGreen==1) or self.crossed==1) and (self.index==0 or self.y+self.currentImage.get_rect().height<(vehicles[self.direction][self.lane][self.index-1].y - gap2) or vehicles[self.direction][self.lane][self.index-1].turned==1)):                
-                        self.y += tspeed
+                    if(self.y+self.currentImage.get_rect().height<=self.stop or (currentGreen==1) or self.crossed==1):
+                        can_move = True
+                        for i in range(self.index - 1, -1, -1):
+                            front_v = vehicles[self.direction][self.lane][i]
+                            if front_v.turned == 0:
+                                if self.y+self.currentImage.get_rect().height >= (front_v.y - gap2 - tspeed):
+                                    can_move = False
+                                break
+                        if can_move:
+                            if not self.check_global_collision(self.x, self.y + tspeed):
+                                self.y += tspeed
+                                self.rect.topleft = (self.x, self.y)
                 else:   
                     if(self.turned==0):
-                        self.rotateAngle += rotationAngle * speed_factor
-                        self.currentImage = pygame.transform.rotate(self.originalImage, -self.rotateAngle)
-                        self.x -= 2.5 * speed_factor
-                        self.y += 2 * speed_factor
+                        next_x = self.x - 2.5 * speed_factor
+                        next_y = self.y + 2 * speed_factor
+                        if not self.check_global_collision(next_x, next_y):
+                            self.rotateAngle += rotationAngle * speed_factor
+                            self.currentImage = pygame.transform.rotate(self.originalImage, -self.rotateAngle)
+                            self.x = next_x
+                            self.y = next_y
+                            self.rect = self.currentImage.get_rect()
+                            self.rect.topleft = (self.x, self.y)
                         if(self.rotateAngle>=90):
                             self.rotateAngle = 90
                             self.turned = 1
                     else:
                         if(self.index==0 or self.x>(vehicles[self.direction][self.lane][self.index-1].x + vehicles[self.direction][self.lane][self.index-1].currentImage.get_rect().width + gap2) or self.y<(vehicles[self.direction][self.lane][self.index-1].y - gap2)):
-                            self.x -= tspeed
+                            if not self.check_global_collision(self.x - tspeed, self.y):
+                                self.x -= tspeed
+                                self.rect.topleft = (self.x, self.y)
             else: 
-                if((self.y+self.currentImage.get_rect().height<=self.stop or self.crossed == 1 or (currentGreen==1)) and (self.index==0 or self.y+self.currentImage.get_rect().height<(vehicles[self.direction][self.lane][self.index-1].y - gap2) or (vehicles[self.direction][self.lane][self.index-1].turned==1))):                
-                    self.y += tspeed
+                if((self.y+self.currentImage.get_rect().height<=self.stop or self.crossed == 1 or (currentGreen==1))):
+                    can_move = True
+                    for i in range(self.index - 1, -1, -1):
+                        front_v = vehicles[self.direction][self.lane][i]
+                        if front_v.turned == 0:
+                            if (self.y + self.currentImage.get_rect().height) >= (front_v.y - gap2 - tspeed):
+                                can_move = False
+                            break
+                    
+                    if can_move:
+                        if not self.check_global_collision(self.x, self.y + tspeed):
+                            self.y += tspeed
+                            self.rect.topleft = (self.x, self.y)
             
         elif(self.direction=='left'):
             if(self.crossed==0 and self.x<stopLines[self.direction]):
@@ -240,52 +344,101 @@ class Vehicle(pygame.sprite.Sprite):
                 vehicles[self.direction]['crossed'] += 1
             if(self.willTurn==1):
                 if(self.crossed==0 or self.x>mid[self.direction]['x']):
-                    if((self.x>=self.stop or (currentGreen==2) or self.crossed==1) and (self.index==0 or self.x>(vehicles[self.direction][self.lane][self.index-1].x + vehicles[self.direction][self.lane][self.index-1].currentImage.get_rect().width + gap2) or vehicles[self.direction][self.lane][self.index-1].turned==1)):                
-                        self.x -= tspeed
+                    if(self.x>=self.stop or (currentGreen==2) or self.crossed==1):
+                        can_move = True
+                        for i in range(self.index - 1, -1, -1):
+                            front_v = vehicles[self.direction][self.lane][i]
+                            if front_v.turned == 0:
+                                if self.x <= (front_v.x + front_v.currentImage.get_rect().width + gap2 + tspeed):
+                                    can_move = False
+                                break
+                        if can_move:
+                            if not self.check_global_collision(self.x - tspeed, self.y):
+                                self.x -= tspeed
+                                self.rect.topleft = (self.x, self.y)
                 else: 
                     if(self.turned==0):
-                        self.rotateAngle += rotationAngle * speed_factor
-                        self.currentImage = pygame.transform.rotate(self.originalImage, -self.rotateAngle)
-                        self.x -= 1.8 * speed_factor
-                        self.y -= 2.5 * speed_factor
+                        next_x = self.x - 1.8 * speed_factor
+                        next_y = self.y - 2.5 * speed_factor
+                        if not self.check_global_collision(next_x, next_y):
+                            self.rotateAngle += rotationAngle * speed_factor
+                            self.currentImage = pygame.transform.rotate(self.originalImage, -self.rotateAngle)
+                            self.x = next_x
+                            self.y = next_y
+                            self.rect = self.currentImage.get_rect()
+                            self.rect.topleft = (self.x, self.y)
                         if(self.rotateAngle>=90):
                             self.rotateAngle = 90
                             self.turned = 1
-                            # path = "images/" + directionNumbers[((self.direction_number+1)%noOfSignals)] + "/" + self.vehicleClass + ".png"
-                            # self.x = mid[self.direction]['x']
-                            # self.y = mid[self.direction]['y']
-                            # self.currentImage = pygame.image.load(path)
                     else:
                         if(self.index==0 or self.y>(vehicles[self.direction][self.lane][self.index-1].y + vehicles[self.direction][self.lane][self.index-1].currentImage.get_rect().height +  gap2) or self.x>(vehicles[self.direction][self.lane][self.index-1].x + gap2)):
-                            self.y -= tspeed
+                            if not self.check_global_collision(self.x, self.y - tspeed):
+                                self.y -= tspeed
+                                self.rect.topleft = (self.x, self.y)
             else: 
-                if((self.x>=self.stop or self.crossed == 1 or (currentGreen==2)) and (self.index==0 or self.x>(vehicles[self.direction][self.lane][self.index-1].x + vehicles[self.direction][self.lane][self.index-1].currentImage.get_rect().width + gap2) or (vehicles[self.direction][self.lane][self.index-1].turned==1))):                
-                    self.x -= tspeed
-            # if((self.x>=self.stop or self.crossed == 1 or (currentGreen==2 and currentYellow==0)) and (self.index==0 or self.x>(vehicles[self.direction][self.lane][self.index-1].x + vehicles[self.direction][self.lane][self.index-1].currentImage.get_rect().width + gap2))):                
-            #     self.x -= self.speed
+                if((self.x>=self.stop or self.crossed == 1 or (currentGreen==2))):
+                    can_move = True
+                    for i in range(self.index - 1, -1, -1):
+                        front_v = vehicles[self.direction][self.lane][i]
+                        if front_v.turned == 0:
+                            if (self.x) <= (front_v.x + front_v.currentImage.get_rect().width + gap2 + tspeed):
+                                can_move = False
+                            break
+                    
+                    if can_move:
+                        if not self.check_global_collision(self.x - tspeed, self.y):
+                            self.x -= tspeed
+                            self.rect.topleft = (self.x, self.y)
         elif(self.direction=='up'):
             if(self.crossed==0 and self.y<stopLines[self.direction]):
                 self.crossed = 1
                 vehicles[self.direction]['crossed'] += 1
             if(self.willTurn==1):
                 if(self.crossed==0 or self.y>mid[self.direction]['y']):
-                    if((self.y>=self.stop or (currentGreen==3) or self.crossed == 1) and (self.index==0 or self.y>(vehicles[self.direction][self.lane][self.index-1].y + vehicles[self.direction][self.lane][self.index-1].currentImage.get_rect().height +  gap2) or vehicles[self.direction][self.lane][self.index-1].turned==1)):
-                        self.y -= tspeed
+                    if(self.y>=self.stop or (currentGreen==3) or self.crossed == 1):
+                        can_move = True
+                        for i in range(self.index - 1, -1, -1):
+                            front_v = vehicles[self.direction][self.lane][i]
+                            if front_v.turned == 0:
+                                if self.y <= (front_v.y + front_v.currentImage.get_rect().height + gap2 + tspeed):
+                                    can_move = False
+                                break
+                        if can_move:
+                            if not self.check_global_collision(self.x, self.y - tspeed):
+                                self.y -= tspeed
+                                self.rect.topleft = (self.x, self.y)
                 else:   
                     if(self.turned==0):
-                        self.rotateAngle += rotationAngle * speed_factor
-                        self.currentImage = pygame.transform.rotate(self.originalImage, -self.rotateAngle)
-                        self.x += 1 * speed_factor
-                        self.y -= 1 * speed_factor
+                        next_x = self.x + 1 * speed_factor
+                        next_y = self.y - 1 * speed_factor
+                        if not self.check_global_collision(next_x, next_y):
+                            self.rotateAngle += rotationAngle * speed_factor
+                            self.currentImage = pygame.transform.rotate(self.originalImage, -self.rotateAngle)
+                            self.x = next_x
+                            self.y = next_y
+                            self.rect = self.currentImage.get_rect()
+                            self.rect.topleft = (self.x, self.y)
                         if(self.rotateAngle>=90):
                             self.rotateAngle = 90
                             self.turned = 1
                     else:
                         if(self.index==0 or self.x<(vehicles[self.direction][self.lane][self.index-1].x - vehicles[self.direction][self.lane][self.index-1].currentImage.get_rect().width - gap2) or self.y>(vehicles[self.direction][self.lane][self.index-1].y + gap2)):
-                            self.x += tspeed
+                            if not self.check_global_collision(self.x + tspeed, self.y):
+                                self.x += tspeed
+                                self.rect.topleft = (self.x, self.y)
             else: 
-                if((self.y>=self.stop or self.crossed == 1 or (currentGreen==3)) and (self.index==0 or self.y>(vehicles[self.direction][self.lane][self.index-1].y + vehicles[self.direction][self.lane][self.index-1].currentImage.get_rect().height + gap2) or (vehicles[self.direction][self.lane][self.index-1].turned==1))):                
-                    self.y -= tspeed
+                if((self.y>=self.stop or self.crossed == 1 or (currentGreen==3))):
+                    can_move = True
+                    for i in range(self.index - 1, -1, -1):
+                        front_v = vehicles[self.direction][self.lane][i]
+                        if front_v.turned == 0:
+                            if (self.y) <= (front_v.y + front_v.currentImage.get_rect().height + gap2 + tspeed):
+                                can_move = False
+                            break
+                    if can_move:
+                        if not self.check_global_collision(self.x, self.y - tspeed):
+                            self.y -= tspeed
+                            self.rect.topleft = (self.x, self.y)
 
 # Initialization of signals with default values
 def initialize():
@@ -500,13 +653,14 @@ def updateValues():
 
 # Generating vehicles in the simulation
 def generateVehicles():
-    import time
     last_ambulance_time = time.time()
+    next_ambulance_interval = random.randint(12, 18) # Randomize around 15s
     while(True):
         current_time = time.time()
-        if (current_time - last_ambulance_time) > 30: # 30s interval for ambulance
+        if (current_time - last_ambulance_time) > next_ambulance_interval:
             vehicle_type = 5
             last_ambulance_time = current_time
+            next_ambulance_interval = random.randint(12, 18) # Set next random interval
         else:
             vehicle_type = random.randint(0,4)
         
